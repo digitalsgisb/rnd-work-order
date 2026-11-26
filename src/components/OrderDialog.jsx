@@ -169,7 +169,75 @@ return <Modal title={draft.title||'New Work Order'} subtitle={`${base.workOrderI
         )}
       </Section>
     }
-    <Section title="Activity history" icon={History}><div className="timeline">{[...base.history].reverse().map(h=><article key={h.id}><span className="timeline-dot"/><div><strong>{h.action}</strong><p>{h.by}{h.role?` · ${ROLES[h.role]||h.role}`:''} · {fmt(h.at)}</p>{h.details&&<p>{h.details}</p>}{h.changes?.length>0&&<div className="audit-changes">{h.changes.map(c=><div className="audit-change" key={c.field}><strong>{fieldLabel(c.field)}</strong><div className="audit-pair"><div><small>Previous</small><AuditValue value={c.previous}/></div><div><small>Updated</small><AuditValue value={c.updated}/></div></div></div>)}</div>}</div></article>)}{!base.history.length&&<p className="muted">No recorded activity yet.</p>}</div></Section></div></Modal>}
+    
+<Section title="Updates" icon={History}>
+  <div style={{
+    display:'flex',
+    flexDirection:'column',
+    gap:'20px',
+    padding:'8px 0'
+  }}>
+    {[...base.history]
+      .sort((a,b)=>new Date(b.at)-new Date(a.at))
+      .map(h=>
+        <article
+          key={h.id}
+          style={{
+            display:'flex',
+            alignItems:'flex-start',
+            gap:'12px'
+          }}
+        >
+          <span style={{
+            width:'10px',
+            height:'10px',
+            minWidth:'10px',
+            borderRadius:'50%',
+            background:'#86152B',
+            marginTop:'5px'
+          }}/>
+
+          <div style={{
+            flex:1,
+            minWidth:0,
+            overflowWrap:'anywhere'
+          }}>
+            <strong style={{
+              fontSize:'14px',
+              lineHeight:'1.5'
+            }}>
+              {updateMessage(h)}
+            </strong>
+
+            {h.details &&
+              h.details.trim() !== updateMessage(h).trim() &&
+              <div style={{
+                fontSize:'13px',
+                marginTop:'3px',
+                whiteSpace:'pre-wrap'
+              }}>
+                {h.details}
+              </div>
+            }
+
+            <div style={{
+              color:'#64748b',
+              fontSize:'11px',
+              marginTop:'4px'
+            }}>
+              {h.by} · {updateTime(h.at)}
+            </div>
+          </div>
+        </article>
+      )
+    }
+
+    {!base.history.length &&
+      <p className="muted">No updates yet.</p>
+    }
+  </div>
+</Section>
+</div></Modal>}
 
 const fieldLabel=k=>({ref:'Reference No.',due:'Requested completion date',estimate:'Estimated completion date / time',photos:'Work order photos',documents:'Supporting documents',pic:'Person in charge',actual:'Actual completion',status:'Status'}[k]||k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase()));
 function AuditValue({value}){
@@ -178,3 +246,64 @@ function AuditValue({value}){
           {JSON.stringify(value,null,2)}
         </span>;
     if(Array.isArray(value)&&value.some(v=>v?.blob))return <AuditFiles files={value}/>;if(value===null||value===''||(Array.isArray(value)&&!value.length))return <span>—</span>;return <span>{Array.isArray(value)?value.join(', '):typeof value==='boolean'?(value?'Yes':'No'):String(STATUS[value]||value)}</span>}
+
+
+function updateMessage(h) {
+  const action = String(h.action || '');
+
+  const messages = {
+    'Draft created': 'Work order created.',
+    'Created': 'Work order created.',
+    'Submitted': 'Work order submitted for approval.',
+    'Approved': 'Approved by department approver.',
+    'Received by R&D': 'Acknowledged by R&D.',
+    'Planning updated': 'Work planning details updated.',
+    'Work planned': 'Work plan confirmed.',
+    'Work started': 'Work started.',
+    'Started': 'Work started.',
+    'Work completed': 'Work completed.',
+    'Completion updated': 'Work completion details updated.',
+    'Accuracy verified': 'Work accuracy verified.',
+    'Acknowledged and closed':
+      'Requester acknowledged and closed the work order.',
+    'Returned for correction':
+      'Work order returned for correction.',
+    'Rejected': 'Work order rejected.',
+    'Reopened': 'Work order reopened.',
+    'Rectification requested':
+      'Rectification requested.',
+    'Unable to proceed':
+      'Work order unable to proceed.'
+  };
+
+  if (/photo/i.test(action) && h.photoNames?.length) {
+    const names = h.photoNames.join(', ');
+
+    return /replac/i.test(action)
+      ? 'Replaced photo: ' + names + '.'
+      : 'Uploaded ' + names + '.';
+  }
+
+  return messages[action] ||
+    (action
+      ? action.replace(/[.]+$/, '') + '.'
+      : 'Work order updated.');
+}
+
+function updateTime(value) {
+  if (!value) return '';
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return '';
+
+  return new Intl.DateTimeFormat('en-MY', {
+    timeZone:'Asia/Kuala_Lumpur',
+    day:'numeric',
+    month:'short',
+    year:'numeric',
+    hour:'numeric',
+    minute:'2-digit',
+    hour12:true
+  }).format(date);
+}

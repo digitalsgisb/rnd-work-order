@@ -141,6 +141,27 @@ export async function getOrderDetails(order) {
     role: h.account_role,
     at: h.created_at,
     details: h.remarks || "",
+
+    photoNames: [...new Set(
+      (h.changes || []).flatMap(c => {
+        const ids = [c.photo_id];
+
+        if (/photo/i.test(c.field || "")) {
+          if (
+            typeof c.updated === "string" ||
+            typeof c.updated === "number"
+          ) ids.push(c.updated);
+        }
+
+        return ids
+          .filter(id => id != null)
+          .map(id => photoRecords.find(
+            p => String(p.id) === String(id)
+          )?.file_name)
+          .filter(Boolean);
+      })
+    )],
+
     changes: (h.changes || []).map(c =>
       c.field ? c : {
         field: "Photo version",
