@@ -1,0 +1,8 @@
+import React from 'react';
+export function Field({label,children,wide=false}){return <label className={'field '+(wide?'wide':'')}><span>{label}</span>{children}</label>}
+export function Input({label,value,onChange,disabled,type='text',wide=false,placeholder}){return <Field label={label} wide={wide}><input type={type} value={value||''} onChange={e=>onChange(e.target.value)} disabled={disabled} placeholder={placeholder}/></Field>}
+export function Select({label,value,onChange,disabled,options,wide=false}){return <Field label={label} wide={wide}><select value={value||''} disabled={disabled} onChange={e=>onChange(e.target.value)}><option value="">Select…</option>{options.map(o=><option key={o}>{o}</option>)}</select></Field>}
+export function Textarea({label,value,onChange,disabled,wide=true}){return <Field label={label} wide={wide}><textarea rows={3} value={value||''} disabled={disabled} onChange={e=>onChange(e.target.value)}/></Field>}
+export function Checks({label,options,value,disabled,onChange}){return <fieldset className="checks"><legend>{label}</legend>{options.map(o=><label key={o}><input type="checkbox" checked={value.includes(o)} disabled={disabled} onChange={e=>onChange(e.target.checked?[...value,o]:value.filter(x=>x!==o))}/>{o}</label>)}</fieldset>}
+export function Section({title,children,tone='neutral',icon:Icon}){return <section className={'section tone-'+tone}><header>{Icon&&<Icon size={18}/>}<h3>{title}</h3></header><div className="section-body">{children}</div></section>}
+export function Info({label,value}){return <div className="info"><span>{label}</span><strong>{value||'—'}</strong></div>}
