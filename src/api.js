@@ -285,7 +285,11 @@ async function uploadPhoto(id, photo, version, note) {
   const form = new FormData();
 
   form.append("photo", photo.blob, photo.name);
-  form.append("photo_type", "before");
+  if (!["before", "inspection", "after"].includes(photo.kind)) {
+    throw new Error("Invalid photo type");
+  }
+
+  form.append("photo_type", photo.kind);
   form.append("description", photo.description || "");
   form.append("version", String(version));
   form.append("note", note || "");
@@ -432,12 +436,15 @@ export async function saveRequesterOrder(
 export async function performWorkflowAction(
   order, action, note = ""
 ) {
-  if (!["approve", "return", "reject", "receive"].includes(action)) {
+  if (![
+      "approve", "return", "reject", "receive",
+      "verify", "rectify", "close"
+    ].includes(action)) {
     throw new Error("Action is not supported yet.");
   }
 
   if (
-    ["return", "reject"].includes(action) &&
+    ["return", "reject", "rectify"].includes(action) &&
     !note.trim()
   ) {
     throw new Error("Please provide a reason.");
@@ -551,6 +558,127 @@ export async function savePlanningOrder(
 
   } catch(error) {
     if (wrote || error.status === 409) {
+      try {
+        error.latest = await loadOrder(base.id);
+      } catch {
+        error.reloadRequired = true;
+      }
+    }
+
+    throw error;
+  }
+}
+
+
+export async function saveCompletionOrder(
+  base, draft, action
+) {
+  const route = "/work-orders/" + base.id;
+
+  let version = Number(base.version);
+  let attempted = false;
+
+  const pendingPhotos = draft.photos.filter(
+    p => !p.serverId &&
+      ["inspection", "after"].includes(p.kind)
+  );
+
+  const fields = [
+    "outcome",
+    "actual",
+    "completionRemarks",
+    "verificationRequired"
+  ];
+
+  const changed = fields.some(
+    key => draft[key] !== base[key]
+  );
+
+  if (action && action !== "finish") {
+    throw new Error("Invalid completion action");
+  }
+
+  if (!action) {
+    for (const photo of pendingPhotos) {
+      if (!(photo.description || "").trim()) {
+        throw new Error(
+          "Please provide a description for each R&D photo."
+        );
+      }
+    }
+  }
+
+  function malaysiaTime(value) {
+    if (
+      typeof value !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)
+    ) {
+      throw new Error(
+        "Enter a valid actual completion date and time."
+      );
+    }
+
+    return value + ":00+08:00";
+  }
+
+  try {
+    if (action === "finish") {
+      attempted = true;
+
+      await request(route + "/actions", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "finish",
+          version
+        })
+      });
+
+    } else {
+      if (changed) {
+        if (!draft.outcome) {
+          throw new Error("Select the work completion outcome.");
+        }
+
+        if (!(draft.completionRemarks || "").trim()) {
+          throw new Error("Enter the completion remarks.");
+        }
+
+        const payload = {
+          version,
+          outcome: draft.outcome,
+          actual: malaysiaTime(draft.actual),
+          completionRemarks: draft.completionRemarks,
+          verificationRequired: !!draft.verificationRequired
+        };
+
+        attempted = true;
+
+        await request(route + "/completion", {
+          method: "PATCH",
+          body: JSON.stringify(payload)
+        });
+
+        version += 1;
+      }
+
+      for (const photo of pendingPhotos) {
+        attempted = true;
+
+        await uploadPhoto(
+          base.id,
+          photo,
+          version,
+          ""
+        );
+
+        version += 1;
+      }
+    }
+
+    return await loadOrder(base.id);
+
+  } catch(error) {
+    if (attempted || error.status === 409) {
       try {
         error.latest = await loadOrder(base.id);
       } catch {

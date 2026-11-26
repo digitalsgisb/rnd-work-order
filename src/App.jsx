@@ -1,7 +1,7 @@
 import React,{useEffect,useState,useRef} from 'react';
 import {ClipboardCheck,LayoutDashboard,ClipboardList,Inbox,CalendarDays,Columns3,ChartNoAxesCombined,Bell,LogOut,Plus,Search,ChevronRight,Menu,Clock,CheckCircle2,Wrench,Activity,AlertCircle,UserCheck,ArrowUpRight,Download,ShieldCheck} from 'lucide-react';
 import {USERS,ROLES,STATUS,RND,canSee,actions,overdue,FINAL,emptyOrder,fmt,today,migrateOrders,nextWorkOrderId} from './workflow.js';
-import {signIn,signOut,getSession,getOrders,getOrderDetails,createDraft,saveRequesterOrder,performWorkflowAction,savePlanningOrder} from './api.js';
+import {signIn,signOut,getSession,getOrders,getOrderDetails,createDraft,saveRequesterOrder,performWorkflowAction,savePlanningOrder,saveCompletionOrder} from './api.js';
 
 import OrderDialog,{Status} from './components/OrderDialog.jsx';
 const stats=[['New requests','new',Inbox],['Pending approval','approval',Clock],['Planned','planned',CalendarDays],['In progress','progress',Wrench],['Under monitoring','monitoring',Activity],['Overdue','overdue',AlertCircle],['Closed','closed',CheckCircle2]];
@@ -217,9 +217,20 @@ export default function App() {
          ['rnd','head'].includes(user.role) &&
          base.status==='received');
 
-      const order = planningAction
+      const completionAction =
+        action === 'finish' ||
+        (!action &&
+         ['rnd','head'].includes(user.role) &&
+         ['progress','temporary','monitoring'].includes(base.status));
+
+      const order = completionAction
+        ? await saveCompletionOrder(base,draft,action)
+        : planningAction
         ? await savePlanningOrder(base,draft,action)
-        : ['approve','return','reject','receive'].includes(action)
+        : [
+          'approve','return','reject','receive',
+          'verify','rectify','close'
+        ].includes(action)
           ? await performWorkflowAction(base,action,reason)
           : await saveRequesterOrder(base,draft,action,note);
 
@@ -242,6 +253,10 @@ export default function App() {
           receive:'Work order received by R&D',
           plan:'Work plan confirmed',
           start:'Work started',
+          finish:'Work completion recorded',
+          verify:'Work accuracy verified',
+          rectify:'Work order returned for rectification',
+          close:'Work order acknowledged and closed',
           return:'Returned for correction',
           reject:'Work order rejected'
         })[action] || 'Work order saved'
