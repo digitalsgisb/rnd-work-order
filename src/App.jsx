@@ -1,15 +1,312 @@
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useState,useRef} from 'react';
 import {ClipboardCheck,LayoutDashboard,ClipboardList,Inbox,CalendarDays,Columns3,ChartNoAxesCombined,Bell,LogOut,Plus,Search,ChevronRight,Menu,Clock,CheckCircle2,Wrench,Activity,AlertCircle,UserCheck,ArrowUpRight,Download,ShieldCheck} from 'lucide-react';
 import {USERS,ROLES,STATUS,RND,canSee,actions,overdue,FINAL,emptyOrder,fmt,today,migrateOrders,nextWorkOrderId} from './workflow.js';
-import {load,persist} from './storage.js';
-import {seed} from './seed.js';
+import {signIn,signOut,getSession,getOrders,getOrderDetails,createDraft,saveRequesterOrder,performWorkflowAction,savePlanningOrder} from './api.js';
+
 import OrderDialog,{Status} from './components/OrderDialog.jsx';
 const stats=[['New requests','new',Inbox],['Pending approval','approval',Clock],['Planned','planned',CalendarDays],['In progress','progress',Wrench],['Under monitoring','monitoring',Activity],['Overdue','overdue',AlertCircle],['Closed','closed',CheckCircle2]];
 const match=(o,s)=>s==='all'||(s==='overdue'?overdue(o):s==='approval'?o.status==='new'&&!o.approvedAt:s==='new'?o.status==='new'&&!!o.approvedAt:s==='open'?!FINAL.includes(o.status)&&o.status!=='draft':o.status===s);
 function Brand({role}){return <div className="brand"><img className="brand-logo" src="/sugihara-logo.png" alt="Sugihara company logo"/><div><strong>Sugihara</strong><small>{role?ROLES[role]:'R&D Work Order'}</small></div></div>}
-function Login({onLogin}){const [role,setRole]=useState('req');return <div className="login-wrap"><div className="login-brand"><Brand/><div className="login-copy"><div className="eyebrow">SUGIHARA DIGITAL</div><h1>Work orders.<br/>Made simpler.</h1><p>A single workspace for requesting, planning, completing and acknowledging R&D work.</p><div className="login-features">{[[ClipboardList,'Submit and track requests'],[CalendarDays,'Plan and manage work'],[ShieldCheck,'Verify and close with confidence']].map(([Icon,t])=><div key={t}><Icon size={20}/>{t}</div>)}</div></div><small>Sugihara Grand Industries Sdn Bhd</small></div><main className="login-form"><div><div className="eyebrow purple-text">R&D WORK ORDER SYSTEM</div><h2>Welcome back</h2><p className="muted">Choose a demo account to explore the workspace.</p><form onSubmit={e=>{e.preventDefault();onLogin(USERS.find(u=>u.id===role));}}><label className="field"><span>Demo account</span><select value={role} onChange={e=>setRole(e.target.value)}>{USERS.map(u=><option value={u.id} key={u.id}>{u.name} — {ROLES[u.role]}</option>)}</select></label><button className="btn primary login-button" type="submit">Enter workspace <ArrowUpRight size={17}/></button></form><div className="demo-note"><ShieldCheck size={19}/><span>Demo only. No password or server authentication. Records are stored in this browser.</span></div></div></main></div>}
+
+function Login({onLogin}) {
+  const [username,setUsername] = useState('');
+  const [password,setPassword] = useState('');
+  const [error,setError] = useState('');
+  const [busy,setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+
+    try {
+      await onLogin(username,password);
+    } catch(e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="login-wrap">
+    <div className="login-brand">
+      <Brand/>
+      <div className="login-copy">
+        <div className="eyebrow">SUGIHARA DIGITAL</div>
+        <h1>Work orders.<br/>Made simpler.</h1>
+        <p>A single workspace for requesting, planning,
+        completing and acknowledging R&D work.</p>
+        <div className="login-features">
+          {[[ClipboardList,'Submit and track requests'],
+          [CalendarDays,'Plan and manage work'],
+          [ShieldCheck,'Verify and close with confidence']]
+          .map(([Icon,t])=>
+            <div key={t}><Icon size={20}/>{t}</div>
+          )}
+        </div>
+      </div>
+      <small>Sugihara Grand Industries Sdn Bhd</small>
+    </div>
+
+    <main className="login-form">
+      <div>
+        <div className="eyebrow purple-text">
+          R&D WORK ORDER SYSTEM
+        </div>
+        <h2>Welcome back</h2>
+        <p className="muted">
+          Sign in with your employee account.
+        </p>
+
+        <form onSubmit={submit}>
+          <label className="field">
+            <span>Username</span>
+            <input
+              value={username}
+              onChange={e=>setUsername(e.target.value)}
+              autoComplete="username"
+              required
+            />
+          </label>
+
+          <label className="field">
+            <span>Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={e=>setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </label>
+
+          {error && <p role="alert"
+            style={{color:'#DC2626'}}>{error}</p>}
+
+          <button
+            className="btn primary login-button"
+            type="submit"
+            disabled={busy}
+          >
+            {busy?'Signing in...':'Sign in'}
+            <ArrowUpRight size={17}/>
+          </button>
+        </form>
+
+        <div className="demo-note">
+          <ShieldCheck size={19}/>
+          <span>Server-authenticated employee access.</span>
+        </div>
+      </div>
+    </main>
+  </div>;
+}
+
 function WorkList({orders,onOpen}){return <div className="table-scroll"><table><thead><tr><th>Work order / request</th><th>Department</th><th>Requested due</th><th>Person in charge</th><th>Status</th><th></th></tr></thead><tbody>{orders.map(o=><tr key={o.id} onClick={()=>onOpen(o)}><td><div className="request-cell"><span className={'row-accent accent-'+o.status}/><div><small>{o.workOrderId}{o.ref?` · Ref: ${o.ref}`:''}</small><button className="row-title" onClick={e=>{e.stopPropagation();onOpen(o);}}>{o.title||'Untitled draft'}</button></div></div></td><td>{o.department}</td><td>{fmt(o.due)}</td><td>{o.pic||'Unassigned'}</td><td><div className="status-stack"><Status order={o}/>{overdue(o)&&<span className="status status-overdue">Overdue</span>}</div></td><td><ChevronRight size={17} className="muted"/></td></tr>)}</tbody></table>{!orders.length&&<div className="empty"><ClipboardList size={30}/><strong>No work orders found</strong><span>Try another search or filter.</span></div>}</div>}
 function Board({orders,onOpen}){const groups=[['New / approval',['new','correction']],['Received / planned',['received','planned']],['In progress',['progress']],['Monitoring',['monitoring','temporary']],['Review & acknowledgement',['verification','ack']],['Closed',['closed']]];return <div className="board">{groups.map(([name,ss])=><section className={'board-col board-'+ss[0]} key={name}><header><strong>{name}</strong><span>{orders.filter(o=>ss.includes(o.status)).length}</span></header>{orders.filter(o=>ss.includes(o.status)).map(o=><button className="board-item" key={o.id} onClick={()=>onOpen(o)}><small>{o.workOrderId}{o.ref?` · Ref: ${o.ref}`:''}</small><strong>{o.title}</strong><div className="muted">{o.department} · {fmt(o.due)}</div><Status order={o}/>{overdue(o)&&<span className="status status-overdue">Overdue</span>}</button>)}</section>)}</div>}
 function exportCsv(orders){const esc=v=>'"'+String(v??'').replace(/^[=+\-@\t\r]/,"'$&").replaceAll('"','""')+'"';const rows=[['Work Order ID','Reference No.','Title','Department','Status','Requested due','PIC','Actual completion'],...orders.map(o=>[o.workOrderId,o.ref,o.title,o.department,(o.status==='new'&&!o.approvedAt?'Pending approval':STATUS[o.status]),o.due,o.pic,o.actual])];const blob=new Blob(['\uFEFF'+rows.map(r=>r.map(esc).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='work-orders.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function Reports({orders}){const submitted=orders.filter(o=>o.submittedAt);const done=submitted.filter(o=>o.actual&&o.outcome==='Completed'&&o.completedAt&&['verification','ack','closed'].includes(o.status));const ontime=done.filter(o=>o.actual.slice(0,10)<=o.due);const received=submitted.filter(o=>o.receivedAt&&o.approvedAt);const avg=(arr,fn)=>arr.length?(arr.reduce((a,o)=>a+fn(o),0)/arr.length).toFixed(1):'—';const counts=Object.entries(STATUS).map(([s,n])=>[n,submitted.filter(o=>o.status===s).length,s]);return <><div className="report-grid">{[['Submitted',submitted.length,'purple'],['Closed',submitted.filter(o=>o.status==='closed').length,'green'],['On-time completion',done.length?Math.round(100*ontime.length/done.length)+'%':'—','teal'],['Avg. response (hrs)',avg(received,o=>(new Date(o.receivedAt)-new Date(o.approvedAt))/3600000),'blue'],['Avg. lead time (days)',avg(done,o=>(new Date(o.actual)-new Date(o.submittedAt))/86400000),'purple'],['Overdue',submitted.filter(overdue).length,'rose']].map(([n,v,t])=><div className={'metric metric-'+t} key={n}><span>{n}</span><strong>{v}</strong></div>)}</div><section className="panel"><div className="panel-head"><h3>Status distribution</h3><button className="btn" onClick={()=>exportCsv(orders)}><Download size={16}/> Export CSV</button></div><div className="report-bars">{counts.filter(x=>x[1]).map(([n,c,s])=><div key={s}><div><span>{n}</span><strong>{c}</strong></div><div className="bar"><i className={'accent-'+s} style={{width:(c/Math.max(1,submitted.length)*100)+'%'}}/></div></div>)}</div><p className="muted report-note">On-time uses the current approved requested due date. Lead time measures submission to actual completion. Only final completed outcomes are included.</p></section></>}
-export default function App(){const [user,setUser]=useState(null);const [orders,setOrders]=useState([]);const [ready,setReady]=useState(false);const [storageError,setStorageError]=useState('');const [page,setPage]=useState('Dashboard');const [search,setSearch]=useState('');const [filter,setFilter]=useState('all');const [selected,setSelected]=useState(null);const [mobile,setMobile]=useState(false);const [toast,setToast]=useState('');useEffect(()=>{(async()=>{try{let data=await load();if(!data){data=seed();await persist(data);}data=migrateOrders(data);await persist(data);setOrders(data);setReady(true);}catch(e){setStorageError('Cannot access browser storage: '+e.message);}})();},[]);useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(''),3500);return()=>clearTimeout(t);},[toast]);function login(u){setUser(u);setPage('Dashboard');setSearch('');setFilter('all');}async function save(o){if(orders.some(x=>x.id!==o.id&&x.workOrderId===o.workOrderId))throw Error('Work Order ID already exists. Close and create a new request.');const next=orders.some(x=>x.id===o.id)?orders.map(x=>x.id===o.id?o:x):[o,...orders];await persist(next);setOrders(next);setToast('Work order saved');}function open(o){setSelected({order:o,isNew:false});}function create(){setSelected({order:emptyOrder(user,nextWorkOrderId(orders)),isNew:true});}function go(p,f='all'){setPage(p);setSearch('');setFilter(f);setMobile(false);}if(storageError)return <main className="loading"><h2>Storage unavailable</h2><p>{storageError}</p><button className="btn" onClick={()=>location.reload()}>Retry</button></main>;if(!ready)return <div className="loading">Loading work orders…</div>;if(!user)return <Login onLogin={login}/>;const rnd=RND(user);const visible=orders.filter(o=>canSee(o,user));const notifications=visible.filter(o=>o.status!=='draft'&&(actions(o,user).some(a=>['approve','receive','verify','close','submit'].includes(a))||(['Details updated','Request updated — reapproval required'].includes(o.history.at(-1)?.action)&&o.history.at(-1)?.byId!==user.id)));const nav=[['Dashboard',LayoutDashboard],...(rnd?[['Incoming Requests',Inbox],['All Work Orders',ClipboardList],['Work Board',Columns3],['Work Planning',CalendarDays],['Reports',ChartNoAxesCombined]]:[['My Work Orders',ClipboardList],...(user.role==='approver'?[['Approvals',ShieldCheck],['All Work Orders',Inbox]]:[]),['Acknowledgements',UserCheck],['History',Clock]]),['Notifications',Bell]];const scoped=visible.filter(o=>page==='Incoming Requests'?o.status==='new'&&!!o.approvedAt:page==='My Work Orders'?o.requesterId===user.id:page==='Approvals'?actions(o,user).includes('approve'):page==='Acknowledgements'?o.status==='ack'&&o.requesterId===user.id:page==='History'?FINAL.includes(o.status):page==='Work Planning'?['received','planned','progress','temporary','monitoring'].includes(o.status):page==='Notifications'?notifications.includes(o):true);const list=scoped.filter(o=>match(o,filter)&&[o.workOrderId,o.ref,o.title,o.department,o.pic,o.description].join(' ').toLowerCase().includes(search.toLowerCase())).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));return <div className="app-shell"><aside className={'sidebar '+(mobile?'mobile-open':'')}><Brand role={user.role}/><div className="nav-label">WORKSPACE</div><nav>{nav.map(([n,Icon])=><button className={page===n?'active':''} key={n} onClick={()=>go(n)}><Icon size={19}/><span>{n}</span>{n==='Notifications'&&notifications.length>0&&<em>{notifications.length}</em>}</button>)}</nav><div className="sidebar-bottom"><div className="user-chip"><span className="avatar">{user.name.split(' ').map(s=>s[0]).slice(0,2).join('')}</span><div><strong>{user.name}</strong><small>{ROLES[user.role]}</small></div></div><button className="logout" onClick={()=>{setUser(null);setSelected(null);}}><LogOut size={17}/> Switch account</button></div></aside><div className="workspace"><header className="topbar"><div><button className="icon-button mobile-toggle" onClick={()=>setMobile(!mobile)} aria-label="Toggle navigation"><Menu/></button><span>Sugihara / R&D Work Order</span></div><div><span className="demo-tag">DEMO</span><button className="icon-button" aria-label="Notifications" onClick={()=>go('Notifications')}><Bell size={20}/>{notifications.length>0&&<i/>}</button><span className="top-avatar">{user.name[0]}</span></div></header><main className="main"><div className="page-head"><div><div className="eyebrow">{rnd?'R&D RECEIVER PORTAL':ROLES[user.role].toUpperCase()+' PORTAL'}</div><h1>{page==='Dashboard'?(rnd?'R&D Work Order Overview':'My Work Orders'):page}</h1><p className="muted">{page==='Dashboard'?new Date().toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'Manage and review work order records.'}</p></div>{user.role==='requester'&&<button className="btn primary" onClick={create}><Plus size={18}/> New Request</button>}</div>{page==='Dashboard'&&<div className="stats">{stats.filter(([n,s])=>!rnd||s!=='approval').map(([n,s,Icon])=><button key={s} className={'stat stat-'+s} onClick={()=>go(rnd?'All Work Orders':user.role==='approver'?'All Work Orders':'My Work Orders',s)}><Icon size={21}/><strong>{visible.filter(o=>match(o,s)).length}</strong><span>{n}</span></button>)}</div>}{page==='Reports'?<Reports orders={visible}/>:page==='Work Board'?<Board orders={visible} onOpen={open}/>:<section className="panel"><div className="panel-head"><div><h3>{page==='Dashboard'?'Recent work orders':page}</h3><p className="muted">{list.length} records · Click any request to open its details</p></div><button className="btn" onClick={()=>exportCsv(list)}><Download size={16}/> CSV</button></div><div className="toolbar"><label className="search"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search work orders…"/></label><select aria-label="Filter status" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="approval">Pending approval</option><option value="overdue">Overdue</option>{Object.entries(STATUS).map(([s,n])=><option key={s} value={s}>{n}</option>)}</select></div><WorkList orders={list} onOpen={open}/></section>}<div className="workspace-footer">R&D Work Order · FR-PR-001 rev0 reference · Frontend prototype</div></main></div>{selected&&<OrderDialog key={selected.order.id} order={selected.order} user={user} isNew={selected.isNew} onSave={save} onClose={()=>setSelected(null)}/>}{toast&&<div className="toast" role="status"><CheckCircle2 size={18}/>{toast}</div>}</div>}
+
+export default function App() {
+  const [user,setUser] = useState(null);
+  const [orders,setOrders] = useState([]);
+  const [selected,setSelected] = useState(null);
+  const [creating,setCreating] = useState(false);
+  const detailRequest = useRef(0);
+  const [ready,setReady] = useState(false);
+  const [storageError,setStorageError] = useState('');
+  const [page,setPage] = useState('Dashboard');
+  const [search,setSearch] = useState('');
+  const [filter,setFilter] = useState('all');
+  const [mobile,setMobile] = useState(false);
+  const [toast,setToast] = useState('');
+
+  useEffect(()=>{
+    (async()=>{
+      try {
+        const current = await getSession();
+        if(current) {
+          setOrders(await getOrders());
+          setUser(current);
+        }
+      } catch(e) {
+        setStorageError(e.message);
+      } finally {
+        setReady(true);
+      }
+    })();
+  },[]);
+
+  useEffect(()=>{
+    if(!toast) return;
+    const t=setTimeout(()=>setToast(''),3500);
+    return ()=>clearTimeout(t);
+  },[toast]);
+
+  async function login(username,password) {
+    const current = await signIn(username,password);
+
+    setOrders(await getOrders());
+    setUser(current);
+    setPage('Dashboard');
+    setSearch('');
+    setFilter('all');
+  }
+
+  async function logout() {
+    try {
+      await signOut();
+      detailRequest.current++;
+      setSelected(null);
+      setUser(null);
+      setOrders([]);
+      setToast('');
+    } catch(e) {
+      setToast(e.message);
+    }
+  }
+
+  async function refresh() {
+    try {
+      setOrders(await getOrders());
+      setToast('Work orders refreshed');
+    } catch(e) {
+      if(e.status===401) {
+        setUser(null);
+        setOrders([]);
+      } else {
+        setToast(e.message);
+      }
+    }
+  }
+
+
+  async function create() {
+    if(creating) return;
+
+    const token = ++detailRequest.current;
+
+    setCreating(true);
+
+    try {
+      const order = await createDraft();
+
+      if(token !== detailRequest.current) return;
+
+      setOrders(items=>[
+        order,
+        ...items.filter(o=>o.id!==order.id)
+      ]);
+
+      setSelected(order);
+      setToast('New draft created');
+
+    } catch(e) {
+      if(token === detailRequest.current)
+        setToast(e.message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function save(base,draft,action,note,reason) {
+    try {
+      const planningAction =
+        ['plan','start'].includes(action) ||
+        (!action &&
+         ['rnd','head'].includes(user.role) &&
+         base.status==='received');
+
+      const order = planningAction
+        ? await savePlanningOrder(base,draft,action)
+        : ['approve','return','reject','receive'].includes(action)
+          ? await performWorkflowAction(base,action,reason)
+          : await saveRequesterOrder(base,draft,action,note);
+
+      if (!order) {
+        setOrders(items=>items.filter(
+          o=>o.id!==base.id
+        ));
+        setToast('Work order returned for correction');
+        return null;
+      }
+
+      setOrders(items=>items.map(
+        o=>o.id===order.id?order:o
+      ));
+
+      setToast(
+        ({
+          submit:'Request submitted for approval',
+          approve:'Work order approved',
+          receive:'Work order received by R&D',
+          plan:'Work plan confirmed',
+          start:'Work started',
+          return:'Returned for correction',
+          reject:'Work order rejected'
+        })[action] || 'Work order saved'
+      );
+
+      return order;
+
+    } catch(e) {
+      if(e.latest) {
+        setOrders(items=>items.map(
+          o=>o.id===e.latest.id?e.latest:o
+        ));
+      }
+      throw e;
+    }
+  }
+
+  async function open(o) {
+    const token = ++detailRequest.current;
+    setToast('Loading work order details...');
+
+    try {
+      const detail = await getOrderDetails(o);
+
+      if(token !== detailRequest.current) return;
+
+      setSelected(detail);
+      setToast('');
+    } catch(e) {
+      if(token === detailRequest.current) {
+        setToast(e.message);
+      }
+    }
+  }
+
+function go(p,f='all'){setPage(p);setSearch('');setFilter(f);setMobile(false);}if(storageError)return <main className="loading"><h2>Server unavailable</h2><p>{storageError}</p><button className="btn" onClick={()=>location.reload()}>Retry</button></main>;if(!ready)return <div className="loading">Loading work orders…</div>;if(!user)return <Login onLogin={login}/>;const rnd=RND(user);const visible=orders;const notifications=visible.filter(o=>o.status!=='draft'&&(actions(o,user).some(a=>['approve','receive','verify','close','submit'].includes(a))||(['Details updated','Request updated — reapproval required'].includes(o.history.at(-1)?.action)&&o.history.at(-1)?.byId!==user.id)));const nav=[['Dashboard',LayoutDashboard],...(rnd?[['Incoming Requests',Inbox],['All Work Orders',ClipboardList],['Work Board',Columns3],['Work Planning',CalendarDays],['Reports',ChartNoAxesCombined]]:[['My Work Orders',ClipboardList],...(user.role==='approver'?[['Approvals',ShieldCheck],['All Work Orders',Inbox]]:[]),['Acknowledgements',UserCheck],['History',Clock]]),['Notifications',Bell]];const scoped=visible.filter(o=>page==='Incoming Requests'?o.status==='new'&&!!o.approvedAt:page==='My Work Orders'?o.requesterId===user.id:page==='Approvals'?actions(o,user).includes('approve'):page==='Acknowledgements'?o.status==='ack'&&o.requesterId===user.id:page==='History'?FINAL.includes(o.status):page==='Work Planning'?['received','planned','progress','temporary','monitoring'].includes(o.status):page==='Notifications'?notifications.includes(o):true);const list=scoped.filter(o=>match(o,filter)&&[o.workOrderId,o.ref,o.title,o.department,o.pic,o.description].join(' ').toLowerCase().includes(search.toLowerCase())).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));return <div className="app-shell"><aside className={'sidebar '+(mobile?'mobile-open':'')}><Brand role={user.role}/><div className="nav-label">WORKSPACE</div><nav>{nav.map(([n,Icon])=><button className={page===n?'active':''} key={n} onClick={()=>go(n)}><Icon size={19}/><span>{n}</span>{n==='Notifications'&&notifications.length>0&&<em>{notifications.length}</em>}</button>)}</nav><div className="sidebar-bottom"><div className="user-chip"><span className="avatar">{user.name.split(' ').map(s=>s[0]).slice(0,2).join('')}</span><div><strong>{user.name}</strong><small>{ROLES[user.role]}</small></div></div><button className="logout" onClick={logout}><LogOut size={17}/> Sign out</button></div></aside><div className="workspace"><header className="topbar"><div><button className="icon-button mobile-toggle" onClick={()=>setMobile(!mobile)} aria-label="Toggle navigation"><Menu/></button><span>Sugihara / R&D Work Order</span></div><div><span className="demo-tag">PREVIEW</span><button className="icon-button" aria-label="Notifications" onClick={()=>go('Notifications')}><Bell size={20}/>{notifications.length>0&&<i/>}</button><span className="top-avatar">{user.name[0]}</span></div></header><main className="main"><div className="page-head"><div><div className="eyebrow">{rnd?'R&D RECEIVER PORTAL':ROLES[user.role].toUpperCase()+' PORTAL'}</div><h1>{page==='Dashboard'?(rnd?'R&D Work Order Overview':'My Work Orders'):page}</h1><p className="muted">{page==='Dashboard'?new Date().toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'Manage and review work order records.'}</p></div><div className="actions">
+      <button className="btn" onClick={refresh}>
+        Refresh
+      </button>
+
+      {user.role==='requester'&&
+        <button
+          className="btn primary"
+          onClick={create}
+          disabled={creating}
+        >
+          <Plus size={18}/>
+          {creating?'Creating...':'New Request'}
+        </button>
+      }
+    </div></div>{page==='Dashboard'&&<div className="stats">{stats.filter(([n,s])=>!rnd||s!=='approval').map(([n,s,Icon])=><button key={s} className={'stat stat-'+s} onClick={()=>go(rnd?'All Work Orders':user.role==='approver'?'All Work Orders':'My Work Orders',s)}><Icon size={21}/><strong>{visible.filter(o=>match(o,s)).length}</strong><span>{n}</span></button>)}</div>}{page==='Reports'?<Reports orders={visible}/>:page==='Work Board'?<Board orders={visible} onOpen={open}/>:<section className="panel"><div className="panel-head"><div><h3>{page==='Dashboard'?'Recent work orders':page}</h3><p className="muted">{list.length} records · Click any request to open its details</p></div><button className="btn" onClick={()=>exportCsv(list)}><Download size={16}/> CSV</button></div><div className="toolbar"><label className="search"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search work orders…"/></label><select aria-label="Filter status" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="approval">Pending approval</option><option value="overdue">Overdue</option>{Object.entries(STATUS).map(([s,n])=><option key={s} value={s}>{n}</option>)}</select></div><WorkList orders={list} onOpen={open}/></section>}<div className="workspace-footer">R&D Work Order · FR-PR-001 rev0 reference · Database integration preview</div></main></div>{selected && <OrderDialog
+      key={selected.id}
+      order={selected}
+      user={user}
+      readOnly={
+        !['approver','rnd','head'].includes(user.role) && (
+          user.id!==selected.requesterId ||
+          ![
+            'draft','correction','new','received',
+            'planned','progress','temporary',
+            'monitoring','verification','ack'
+          ].includes(selected.status)
+        )
+      }
+      onSave={save}
+      onClose={()=>setSelected(null)}
+    />}
+    {toast&&<div className="toast" role="status"><CheckCircle2 size={18}/>{toast}</div>}</div>}
