@@ -128,10 +128,12 @@ export async function getOrders() {
 export async function getOrderDetails(order) {
   const route = "/work-orders/" + order.id;
 
-  const [records, photoRecords] = await Promise.all([
-    request(route + "/history"),
-    request(route + "/photos")
-  ]);
+  const [records, photoRecords, attachmentRecords] =
+    await Promise.all([
+      request(route + "/history"),
+      request(route + "/photos"),
+      request(route + "/attachments")
+    ]);
 
   const history = records.map(h => ({
     id: String(h.id),
@@ -239,6 +241,20 @@ export async function getOrderDetails(order) {
       : "",
     history,
     photos,
+
+    documents: attachmentRecords.map(d => ({
+      id: String(d.id),
+      serverId: String(d.id),
+      name: d.file_name,
+      kind: "document",
+      size: Number(d.file_size || 0),
+      mimeType: d.mime_type,
+      by: d.uploaded_by_name || "Employee",
+      at: d.uploaded_at,
+      url: "/api" + route +
+        "/attachments/" + d.id + "/content"
+    })),
+
     photoVersions: photoRecords.filter(p => !p.is_current)
       .map(p => ({
         id: p.id,
@@ -367,6 +383,21 @@ export async function saveRequesterOrder(
     "draft", "correction"
   ].includes(base.status);
 
+  const pendingDocuments = (draft.documents || [])
+    .filter(d => !d.serverId);
+
+  if (submitted && pendingDocuments.length) {
+    throw new Error(
+      "Documents can only be added to draft or returned requests."
+    );
+  }
+
+  if ((draft.documents || []).length > 10) {
+    throw new Error(
+      "Maximum 10 supporting documents per work order."
+    );
+  }
+
   const material = Object.keys(fields).some(
     key => key !== "reference_no" &&
       JSON.stringify(fields[key]) !==
@@ -417,7 +448,17 @@ export async function saveRequesterOrder(
       wrote = true;
     }
 
-    // Submit only after details and photos are saved
+    // Upload supporting documents
+    for (const file of pendingDocuments) {
+      const result = await uploadAttachment(
+        base.id, file, version
+      );
+
+      version = result.version;
+      wrote = true;
+    }
+
+    // Submit only after details, photos and documents are saved
     if (action === "submit") {
       const result = await request(
         route + "/actions",
@@ -459,13 +500,13 @@ export async function performWorkflowAction(
 ) {
   if (![
       "approve", "return", "reject", "receive",
-      "verify", "rectify", "close"
+      "verify", "rectify", "close", "reopen", "unable"
     ].includes(action)) {
     throw new Error("Action is not supported yet.");
   }
 
   if (
-    ["return", "reject", "rectify"].includes(action) &&
+    ["return", "reject", "rectify", "reopen", "unable"].includes(action) &&
     !note.trim()
   ) {
     throw new Error("Please provide a reason.");
@@ -709,4 +750,63 @@ export async function saveCompletionOrder(
 
     throw error;
   }
+}
+
+
+async function uploadAttachment(id, file, version) {
+  const form = new FormData();
+
+  form.append("attachment", file.blob, file.name);
+  form.append("version", String(version));
+
+  const response = await fetch(
+    "/api/work-orders/" + id + "/attachments",
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-RND-Request": "1"
+      },
+      body: form
+    }
+  );
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    const error = new Error(
+      result.error || "Document upload failed"
+    );
+
+    error.status = response.status;
+    throw error;
+  }
+
+  return result;
+}
+
+
+export async function getNotifications() {
+  return request("/notifications");
+}
+
+export async function getUnreadCount() {
+  return request("/notifications/unread-count");
+}
+
+export async function markNotificationRead(id) {
+  return request(
+    "/notifications/" + encodeURIComponent(id) + "/read",
+    {
+      method:"PATCH",
+      body:JSON.stringify({})
+    }
+  );
+}
+
+export async function markAllNotificationsRead() {
+  return request("/notifications/read-all",{
+    method:"PATCH",
+    body:JSON.stringify({})
+  });
 }

@@ -39,7 +39,7 @@ export function transition(o,u,action,note=''){
  case 'unable':requireNote();p={status:'unable',method:'Unable to proceed',evaluation:note};label='Unable to proceed';break;
  case 'finish':if(!o.outcome||!o.actual||!o.completionRemarks.trim())throw Error('Enter completion outcome, actual date/time and justification.');if(o.startedAt&&Math.floor(new Date(o.actual).getTime()/60000)<Math.floor(new Date(o.startedAt).getTime()/60000))throw Error('Actual completion cannot precede actual start.');if(new Date(o.actual)>new Date())throw Error('Actual completion cannot be in the future.');p={status:o.outcome==='Completed'?(o.verificationRequired?'verification':'ack'):o.outcome==='Use temporarily'?'temporary':'monitoring',completedBy:u.name,completedAt:at,verifiedBy:'',verifiedAt:'',ackBy:'',ackAt:''};label=o.outcome==='Completed'?'Work completed':o.outcome;break;
  case 'verify':p={status:'ack',verifiedBy:u.name,verifiedAt:at};label='Accuracy verified';break;
- case 'rectify':requireNote();p={status:'progress',actual:'',outcome:'',completedBy:'',completedAt:'',verifiedBy:'',verifiedAt:'',ackBy:'',ackAt:''};label='Returned for rectification';break;
+ case 'rectify':requireNote();p={status:'progress',actual:'',outcome:'',completedBy:'',completedAt:'',verifiedBy:'',verifiedAt:'',ackBy:'',ackAt:''};label='Returned for rework';break;
  case 'reopen':requireNote();p={status:'progress',actual:'',outcome:'',completedBy:'',completedAt:'',verifiedBy:'',verifiedAt:'',ackBy:'',ackAt:''};label='Work order reopened';break;
  case 'close':p={status:'closed',ackBy:u.name,ackAt:at};label='Acknowledged and closed';break;
  }

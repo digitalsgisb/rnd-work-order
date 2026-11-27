@@ -26,7 +26,7 @@ export function setupAuth(app) {
 
     cookie: {
       httpOnly: true,
-      secure: false,
+      secure: true,
       sameSite: "lax",
       maxAge: 8 * 60 * 60 * 1000
     }

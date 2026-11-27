@@ -1,3 +1,5 @@
+import {reconnectPhoneNotifications} from './components/PushSettings.jsx';
+import Notifications,{useNotifications} from './components/Notifications.jsx';
 import React,{useEffect,useState,useRef} from 'react';
 import {ClipboardCheck,LayoutDashboard,ClipboardList,Inbox,CalendarDays,Columns3,ChartNoAxesCombined,Bell,LogOut,Plus,Search,ChevronRight,Menu,Clock,CheckCircle2,Wrench,Activity,AlertCircle,UserCheck,ArrowUpRight,Download,ShieldCheck} from 'lucide-react';
 import {USERS,ROLES,STATUS,RND,canSee,actions,overdue,FINAL,emptyOrder,fmt,today,migrateOrders,nextWorkOrderId} from './workflow.js';
@@ -115,11 +117,90 @@ export default function App() {
   const detailRequest = useRef(0);
   const [ready,setReady] = useState(false);
   const [storageError,setStorageError] = useState('');
-  const [page,setPage] = useState('Dashboard');
+  const [page,setPage] = useState(()=>
+    new URLSearchParams(window.location.search)
+      .get('notifications')==='1'
+      ? 'Notifications'
+      : 'Dashboard'
+  );
   const [search,setSearch] = useState('');
   const [filter,setFilter] = useState('all');
   const [mobile,setMobile] = useState(false);
   const [toast,setToast] = useState('');
+
+  useEffect(()=>{
+    if(!user?.id) return;
+
+
+    let running = false;
+
+    async function reconnect() {
+      if(running) return;
+
+      running = true;
+
+      try {
+        await reconnectPhoneNotifications();
+      } catch(err) {
+        console.warn(
+          'Device reconnection:', err.message
+        );
+      } finally {
+        running = false;
+      }
+    }
+
+    function onVisible() {
+      if(document.visibilityState === 'visible') {
+        reconnect();
+      }
+    }
+
+    reconnect();
+
+    window.addEventListener('focus',reconnect);
+
+    document.addEventListener(
+      'visibilitychange',onVisible
+    );
+
+    navigator.serviceWorker?.addEventListener(
+      'controllerchange',reconnect
+    );
+
+    return ()=>{
+      window.removeEventListener('focus',reconnect);
+
+      document.removeEventListener(
+        'visibilitychange',onVisible
+      );
+
+      navigator.serviceWorker?.removeEventListener(
+        'controllerchange',reconnect
+      );
+    };
+
+  },[user?.id]);
+
+  useEffect(()=>{
+    if(!user) return;
+
+    const url = new URL(window.location.href);
+
+    if(url.searchParams.get('notifications')==='1') {
+      setPage('Notifications');
+      url.searchParams.delete('notifications');
+
+      window.history.replaceState(
+        null,'',url.pathname+url.search+url.hash
+      );
+    }
+  },[user?.id]);
+
+  const notificationFeed = useNotifications(
+    user?.id, page
+  );
+  const unreadCount = notificationFeed.count;
 
   useEffect(()=>{
     (async()=>{
@@ -229,7 +310,7 @@ export default function App() {
         ? await savePlanningOrder(base,draft,action)
         : [
           'approve','return','reject','receive',
-          'verify','rectify','close'
+          'verify','rectify','close','reopen','unable'
         ].includes(action)
           ? await performWorkflowAction(base,action,reason)
           : await saveRequesterOrder(base,draft,action,note);
@@ -255,8 +336,10 @@ export default function App() {
           start:'Work started',
           finish:'Work completion recorded',
           verify:'Work accuracy verified',
-          rectify:'Work order returned for rectification',
+          rectify:'Work order returned for rework',
           close:'Work order acknowledged and closed',
+          reopen:'Work order reopened',
+          unable:'Work order marked unable to proceed',
           return:'Returned for correction',
           reject:'Work order rejected'
         })[action] || 'Work order saved'
@@ -292,12 +375,45 @@ export default function App() {
     }
   }
 
-function go(p,f='all'){setPage(p);setSearch('');setFilter(f);setMobile(false);}if(storageError)return <main className="loading"><h2>Server unavailable</h2><p>{storageError}</p><button className="btn" onClick={()=>location.reload()}>Retry</button></main>;if(!ready)return <div className="loading">Loading work orders…</div>;if(!user)return <Login onLogin={login}/>;const rnd=RND(user);const visible=orders;const notifications=visible.filter(o=>o.status!=='draft'&&(actions(o,user).some(a=>['approve','receive','verify','close','submit'].includes(a))||(['Details updated','Request updated — reapproval required'].includes(o.history.at(-1)?.action)&&o.history.at(-1)?.byId!==user.id)));const nav=[['Dashboard',LayoutDashboard],...(rnd?[['Incoming Requests',Inbox],['All Work Orders',ClipboardList],['Work Board',Columns3],['Work Planning',CalendarDays],['Reports',ChartNoAxesCombined]]:[['My Work Orders',ClipboardList],...(user.role==='approver'?[['Approvals',ShieldCheck],['All Work Orders',Inbox]]:[]),['Acknowledgements',UserCheck],['History',Clock]]),['Notifications',Bell]];const scoped=visible.filter(o=>page==='Incoming Requests'?o.status==='new'&&!!o.approvedAt:page==='My Work Orders'?o.requesterId===user.id:page==='Approvals'?actions(o,user).includes('approve'):page==='Acknowledgements'?o.status==='ack'&&o.requesterId===user.id:page==='History'?FINAL.includes(o.status):page==='Work Planning'?['received','planned','progress','temporary','monitoring'].includes(o.status):page==='Notifications'?notifications.includes(o):true);const list=scoped.filter(o=>match(o,filter)&&[o.workOrderId,o.ref,o.title,o.department,o.pic,o.description].join(' ').toLowerCase().includes(search.toLowerCase())).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));return <div className="app-shell"><aside className={'sidebar '+(mobile?'mobile-open':'')}><Brand role={user.role}/><div className="nav-label">WORKSPACE</div><nav>{nav.map(([n,Icon])=><button className={page===n?'active':''} key={n} onClick={()=>go(n)}><Icon size={19}/><span>{n}</span>{n==='Notifications'&&notifications.length>0&&<em>{notifications.length}</em>}</button>)}</nav><div className="sidebar-bottom"><div className="user-chip"><span className="avatar">{user.name.split(' ').map(s=>s[0]).slice(0,2).join('')}</span><div><strong>{user.name}</strong><small>{ROLES[user.role]}</small></div></div><button className="logout" onClick={logout}><LogOut size={17}/> Sign out</button></div></aside><div className="workspace"><header className="topbar"><div><button className="icon-button mobile-toggle" onClick={()=>setMobile(!mobile)} aria-label="Toggle navigation"><Menu/></button><span>Sugihara / R&D Work Order</span></div><div><span className="demo-tag">PREVIEW</span><button className="icon-button" aria-label="Notifications" onClick={()=>go('Notifications')}><Bell size={20}/>{notifications.length>0&&<i/>}</button><span className="top-avatar">{user.name[0]}</span></div></header><main className="main"><div className="page-head"><div><div className="eyebrow">{rnd?'R&D RECEIVER PORTAL':ROLES[user.role].toUpperCase()+' PORTAL'}</div><h1>{page==='Dashboard'?(rnd?'R&D Work Order Overview':'My Work Orders'):page}</h1><p className="muted">{page==='Dashboard'?new Date().toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):'Manage and review work order records.'}</p></div><div className="actions">
-      <button className="btn" onClick={refresh}>
+async function openNotification(id) {
+    const token = ++detailRequest.current;
+
+    const latestOrders = await getOrders();
+
+    if(token !== detailRequest.current) return;
+
+    setOrders(latestOrders);
+
+    const order = latestOrders.find(
+      o=>String(o.id)===String(id)
+    );
+
+    if(!order) {
+      throw new Error(
+        'This work order is no longer accessible.'
+      );
+    }
+
+    await open(order);
+  }
+
+function go(p,f='all'){setPage(p);setSearch('');setFilter(f);setMobile(false);}if(storageError)return <main className="loading"><h2>Server unavailable</h2><p>{storageError}</p><button className="btn" onClick={()=>location.reload()}>Retry</button></main>;if(!ready)return <div className="loading">Loading work orders…</div>;if(!user)return <Login onLogin={login}/>;const rnd=RND(user);const visible=orders;const nav=[['Dashboard',LayoutDashboard],...(rnd?[['Incoming Requests',Inbox],['All Work Orders',ClipboardList],['Work Board',Columns3],['Work Planning',CalendarDays],['Reports',ChartNoAxesCombined]]:[['My Work Orders',ClipboardList],...(user.role==='approver'?[['Approvals',ShieldCheck],['All Work Orders',Inbox]]:[]),['Acknowledgements',UserCheck],['History',Clock]]),['Notifications',Bell]];const scoped=visible.filter(o=>page==='Incoming Requests'?o.status==='new'&&!!o.approvedAt:page==='My Work Orders'?o.requesterId===user.id:page==='Approvals'?actions(o,user).includes('approve'):page==='Acknowledgements'?o.status==='ack'&&o.requesterId===user.id:page==='History'?FINAL.includes(o.status):page==='Work Planning'?['received','planned','progress','temporary','monitoring'].includes(o.status):true);const list=scoped.filter(o=>match(o,filter)&&[o.workOrderId,o.ref,o.title,o.department,o.pic,o.description].join(' ').toLowerCase().includes(search.toLowerCase())).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));return <div className="app-shell"><aside className={'sidebar '+(mobile?'mobile-open':'')}><Brand role={user.role}/><div className="nav-label">WORKSPACE</div><nav>{nav.map(([n,Icon])=><button className={page===n?'active':''} key={n} onClick={()=>go(n)}><Icon size={19}/><span>{n}</span>{n==='Notifications'&&unreadCount>0&&<em>{unreadCount}</em>}</button>)}</nav><div className="sidebar-bottom"><div className="user-chip"><span className="avatar">{user.name.split(' ').map(s=>s[0]).slice(0,2).join('')}</span><div><strong>{user.name}</strong><small>{ROLES[user.role]}</small></div></div><button className="logout" onClick={logout}><LogOut size={17}/> Sign out</button></div></aside><div className="workspace"><header className="topbar"><div><button className="icon-button mobile-toggle" onClick={()=>setMobile(!mobile)} aria-label="Toggle navigation"><Menu/></button><span>Sugihara / R&D Work Order</span></div><div><span className="demo-tag">PREVIEW</span><button className="icon-button notification-bell" aria-label="Notifications" onClick={()=>go('Notifications')}><Bell size={20}/>
+    {unreadCount>0&&
+      <span className="notification-bell-count">
+        {unreadCount>99?'99+':unreadCount}
+      </span>
+    }</button><span className="top-avatar">{user.name[0]}</span></div></header><main className="main"><div className="page-head"><div><div className="eyebrow">{rnd?'R&D RECEIVER PORTAL':ROLES[user.role].toUpperCase()+' PORTAL'}</div><h1>{page==='Dashboard'?(rnd?'R&D Work Order Overview':'My Work Orders'):page}</h1><p className="muted">{page==='Dashboard'?new Date().toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):page==='Notifications'
+      ?'Work order updates that need your attention.'
+      :'Manage and review work order records.'}</p></div><div className="actions">
+      <button className="btn" onClick={
+        page==='Notifications'
+          ? notificationFeed.refresh
+          : refresh
+      }>
         Refresh
       </button>
 
-      {user.role==='requester'&&
+      {user.role==='requester'&&page!=='Notifications'&&
         <button
           className="btn primary"
           onClick={create}
@@ -307,7 +423,13 @@ function go(p,f='all'){setPage(p);setSearch('');setFilter(f);setMobile(false);}i
           {creating?'Creating...':'New Request'}
         </button>
       }
-    </div></div>{page==='Dashboard'&&<div className="stats">{stats.filter(([n,s])=>!rnd||s!=='approval').map(([n,s,Icon])=><button key={s} className={'stat stat-'+s} onClick={()=>go(rnd?'All Work Orders':user.role==='approver'?'All Work Orders':'My Work Orders',s)}><Icon size={21}/><strong>{visible.filter(o=>match(o,s)).length}</strong><span>{n}</span></button>)}</div>}{page==='Reports'?<Reports orders={visible}/>:page==='Work Board'?<Board orders={visible} onOpen={open}/>:<section className="panel"><div className="panel-head"><div><h3>{page==='Dashboard'?'Recent work orders':page}</h3><p className="muted">{list.length} records · Click any request to open its details</p></div><button className="btn" onClick={()=>exportCsv(list)}><Download size={16}/> CSV</button></div><div className="toolbar"><label className="search"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search work orders…"/></label><select aria-label="Filter status" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="approval">Pending approval</option><option value="overdue">Overdue</option>{Object.entries(STATUS).map(([s,n])=><option key={s} value={s}>{n}</option>)}</select></div><WorkList orders={list} onOpen={open}/></section>}<div className="workspace-footer">R&D Work Order · FR-PR-001 rev0 reference · Database integration preview</div></main></div>{selected && <OrderDialog
+    </div></div>{page==='Dashboard'&&<div className="stats">{stats.filter(([n,s])=>!rnd||s!=='approval').map(([n,s,Icon])=><button key={s} className={'stat stat-'+s} onClick={()=>go(rnd?'All Work Orders':user.role==='approver'?'All Work Orders':'My Work Orders',s)}><Icon size={21}/><strong>{visible.filter(o=>match(o,s)).length}</strong><span>{n}</span></button>)}</div>}{page==='Notifications'?
+      <Notifications
+        key={user.id}
+        feed={notificationFeed}
+        onOpen={openNotification}
+      />
+      :page==='Reports'?<Reports orders={visible}/>:page==='Work Board'?<Board orders={visible} onOpen={open}/>:<section className="panel"><div className="panel-head"><div><h3>{page==='Dashboard'?'Recent work orders':page}</h3><p className="muted">{list.length} records · Click any request to open its details</p></div><button className="btn" onClick={()=>exportCsv(list)}><Download size={16}/> CSV</button></div><div className="toolbar"><label className="search"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search work orders…"/></label><select aria-label="Filter status" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="approval">Pending approval</option><option value="overdue">Overdue</option>{Object.entries(STATUS).map(([s,n])=><option key={s} value={s}>{n}</option>)}</select></div><WorkList orders={list} onOpen={open}/></section>}<div className="workspace-footer">R&D Work Order · FR-PR-001 rev0 reference · Database integration preview</div></main></div>{selected && <OrderDialog
       key={selected.id}
       order={selected}
       user={user}

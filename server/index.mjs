@@ -5,8 +5,12 @@ import { setupAuth, requireAuth } from "./auth.mjs";
 import workOrders from "./work-orders.mjs";
 import workflow from "./workflow.mjs";
 import photos from "./photos.mjs";
+import notifications from "./notifications.mjs";
+import push from "./push.mjs";
+import attachments from "./attachments.mjs";
 
 const app = express();
+app.set("trust proxy", "loopback");
 
 const PORT = Number(process.env.PORT || 3901);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -69,8 +73,11 @@ app.get("/api/departments", requireAuth, async (req, res) => {
 
 // Work order API
 app.use("/api/work-orders/:id/photos", requireAuth, photos);
+app.use("/api/work-orders/:id/attachments", requireAuth, attachments);
 app.use("/api/work-orders", requireAuth, workflow);
 app.use("/api/work-orders", requireAuth, workOrders);
+app.use("/api/notifications", requireAuth, notifications);
+app.use("/api/push", requireAuth, push);
 
 // Start server
 
